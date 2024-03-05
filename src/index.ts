@@ -3,49 +3,34 @@ import cors from "cors";
 import simpleGit from "simple-git";
 import path from "path";
 import fs from "fs/promises";
-import { uploadFile } from "./gcs";
+import { downloadGCSFolder, uploadBuildOutput } from "./gcs";
+import { commandOptions, createClient } from "redis";
+import { buildReactProject } from "./build";
+
+const subscriber = createClient();
+subscriber.connect();
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 
-async function getAllFiles(dirPath: string): Promise<string[]> {
-    let allFiles: string[] = [];
-    const entries = await fs.readdir(dirPath, { withFileTypes: true });
-
-    for (const entry of entries) {
-        const fullPath = path.join(dirPath, entry.name);
-        if (entry.isDirectory()) {
-            allFiles = allFiles.concat(await getAllFiles(fullPath));
-        } else {
-            allFiles.push(fullPath);
-        }
+async function main() {
+    while(1) {
+        const response = await subscriber.brPop(
+            commandOptions({ isolated: true }),
+            'build-queue',
+            0
+        );
+        console.log(response);
+        // @ts-ignore
+        const id = response.element;
+        await downloadGCSFolder(`output/${response?.element}/`);
+        await buildReactProject(id);
+        await uploadBuildOutput(`output/${response?.element}`);
+        subscriber.hSet("status", id, "deployed");
     }
-
-    return allFiles;
 }
 
-app.post("/upload", async (req, res) => {
-    try {
-        const repoUrl = req.body.repoUrl;
-        const id = Math.random().toString(36).substring(7);
-        const clonePath = path.join(__dirname, id);
+main();
 
-        await simpleGit().clone(repoUrl, clonePath);
-        const allFiles = await getAllFiles(clonePath);
-
-        for (const file of allFiles) {
-            const relativePath = path.relative(clonePath, file);
-            await uploadFile(file, relativePath);
-        }
-
-        res.send("Uploaded to GCS");
-
-        await fs.rm(clonePath, { recursive: true });
-    } catch (error) {
-        console.error("Error uploading to GCS:", error);
-        res.status(500).send("Failed to upload");
-    }
-});
-
-app.listen(8000, () => console.log("Server running on port 8000"));
+app.listen(8001, () => console.log("Server running on port 8001"));
