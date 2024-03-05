@@ -25,9 +25,11 @@ async function main() {
         // @ts-ignore
         const id = response.element;
         await downloadGCSFolder(`output/${response?.element}/`);
+        subscriber.hSet("status", id, "installing");
         await buildReactProject(id);
+        subscriber.hSet("status", id, "building");
         await uploadBuildOutput(`output/${response?.element}`);
-        subscriber.hSet("status", id, "deployed");
+        subscriber.hSet("status", id, "complete");
     }
 }
 
